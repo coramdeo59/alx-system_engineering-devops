@@ -1,0 +1,169 @@
+# What Happens When You Type google.com and Press Enter?
+### Introduction
+Typing “google.com” into your browser and pressing Enter might seem like a simple action, but it triggers a complex series of events behind the scenes. Let’s explore the intricate processes that happen from the moment you press that first key until the Google homepage loads.
+
+### Table of Contents
+- The “g” key is pressed
+- The “enter” key bottoms out
+- Interrupt fires [NOT for USB keyboards]
+- On Windows: A `WM_KEYDOWN` message is sent to the app
+- On OS X: A `KeyDown` NSEvent is sent to the app
+- On GNU/Linux: The Xorg server listens for keycodes
+- Parse URL
+- Is it a URL or a search term?
+- Convert non-ASCII Unicode characters in the hostname
+- Check HSTS list
+- DNS lookup
+
+### The “g” Key is Pressed
+The physical keyboard actions and OS interrupts start the process. When you press the “g” key, the browser receives the event, and the auto-complete functions kick in. Depending on your browser’s algorithm and whether you are in private/incognito mode, various suggestions are presented in the dropdown below the URL bar. These suggestions are sorted and prioritized based on search history, bookmarks, cookies, and popular searches. As you type “google.com,” many blocks of code run, refining the suggestions with each keypress. It may even suggest “google.com” before you finish typing.
+
+### The “Enter” Key Bottoms Out
+When you press the Enter key, an electrical circuit specific to the key is closed. This allows current to flow into the keyboard’s logic circuitry, scanning the state of each key switch, debouncing electrical noise, and converting it to a keycode integer (13 for Enter). The keyboard controller encodes the keycode for transport to the computer via USB or Bluetooth.
+
+**For USB keyboards:**
+- The USB circuitry of the keyboard is powered by the 5V supply provided by the computer’s USB host controller.
+- The keycode is stored in a register called “endpoint.”
+- The host USB controller polls the endpoint, retrieves the keycode, and converts it into USB packets.
+- These packets are sent over D+ and D- pins at a maximum speed of 1.5 Mb/s, decoded at the computer’s host USB controller, and interpreted by the HID universal keyboard device driver.
+
+**For Virtual Keyboards (touch screens):**
+- When the user touches the screen, a tiny amount of current gets transferred to the finger, creating a voltage drop at that point on the screen.
+- The screen controller raises an interrupt reporting the keypress coordinate.
+- The mobile OS notifies the focused application of the press event, raising a software interrupt for sending a ‘key pressed’ message back to the OS.
+
+### Interrupt Fires [NOT for USB Keyboards]
+The keyboard sends signals on its interrupt request line (IRQ), mapped to an interrupt vector by the interrupt controller. The CPU uses the Interrupt Descriptor Table (IDT) to map interrupt vectors to functions (interrupt handlers) supplied by the kernel. When an interrupt arrives, the CPU runs the appropriate handler, entering the kernel.
+
+### On Windows: A `WM_KEYDOWN` Message is Sent to the App
+The HID transport passes the key down event to the `KBDHID.sys` driver, which converts the HID usage into a scancode (`VK_RETURN` for Enter). This driver interfaces with `KBDCLASS.sys` (keyboard class driver), responsible for handling all keyboard input securely. It then calls into `Win32K.sys`, which identifies the active window through the `GetForegroundWindow()` API and sends a `WM_KEYDOWN` message to the browser’s address box.
+
+### On OS X: A `KeyDown` NSEvent is Sent to the App
+The interrupt signal triggers an event in the I/O Kit kext keyboard driver, translating the signal into a key code passed to the OS X `WindowServer` process. The `WindowServer` dispatches an event to appropriate applications through their Mach port. Events are read from the queue by threads with sufficient privileges, handled by an `NSApplication` main event loop via an `NSEvent` of `NSEventType` `KeyDown`.
+
+### On GNU/Linux: The Xorg Server Listens for Keycodes
+When a graphical X server is used, it acquires the keypress through the `evdev` event driver. The X server re-maps keycodes to scancodes, sending the character to the window manager, which then sends it to the focused window. The graphical API of the window prints the appropriate font symbol in the focused field.
+
+### Parse URL
+The browser now has the following information contained in the URL (Uniform Resource Locator):
+- **Protocol**: “http” — Use Hyper Text Transfer Protocol
+- **Resource**: “/” — Retrieve the main (index) page
+
+### Is it a URL or a Search Term?
+If no protocol or valid domain name is given, the browser feeds the text to the default web search engine. The URL may have a special piece of text appended to indicate it came from the browser’s URL bar.
+
+### Convert Non-ASCII Unicode Characters in the Hostname
+The browser checks the hostname for characters outside `a-z`, `A-Z`, `0–9`, `-`, or `.`. If found, the browser applies Punycode encoding to the hostname portion of the URL.
+
+### Check HSTS List
+The browser checks its preloaded HSTS (HTTP Strict Transport Security) list. If the website is on the list, the browser sends its request via HTTPS instead of HTTP. Otherwise, the initial request is sent via HTTP.
+
+### DNS Lookup
+The browser checks if the domain is in its cache. If not, it calls `gethostbyname` to do the lookup. `gethostbyname` checks the local `hosts` file before resolving the hostname through DNS. If not cached or found in the `hosts` file, a request is made to the DNS server configured in the network stack. If the DNS server is on the same subnet, the ARP process follows. If on a different subnet, the ARP process follows for the default gateway IP.
+
+When you type a URL into your browser, several processes occur to display the webpage. This document provides a high-level overview of these steps, covering DNS resolution, ARP process, socket creation, TLS handshake, HTTP protocol, server request handling, and browser rendering.
+
+**DNS Resolution**
+
+When you type a URL like `https://www.google.com` into your browser and hit enter, the first step is to translate that URL into an IP address. This process is called DNS resolution. The browser checks its cache to see if it already knows the IP address for `www.google.com`. If it doesn’t, it will ask the local DNS server (usually provided by your ISP) to resolve `www.google.com` to an IP address.
+
+**ARP Process**
+
+To send an ARP (Address Resolution Protocol) broadcast, the network stack library needs the target IP address to lookup and the MAC address of the interface used to send out the ARP broadcast.
+
+1. **Check ARP Cache:** The ARP cache is first checked for an entry for the target IP. If present, it returns the result: Target IP = MAC.
+
+2. **Route Table Lookup:** If the entry is not in the ARP cache:
+* The route table is checked to see if the target IP address is on any local subnets. If so, the interface associated with that subnet is used. Otherwise, the interface of the default gateway’s subnet is used.
+* The MAC address of the selected network interface is found.
+* A Layer 2 (data link layer of the OSI model) ARP request is sent.
+
+``ARP Request``::
+
+Sender MAC: interface:mac:address:here
+Sender IP: interface.ip.goes.here
+Target MAC: FF:FF:FF:FF:FF:FF (Broadcast)
+Target IP: target.ip.goes.here
+
+**Responses based on Network Setup:**
+* **Directly Connected:** The router responds with an ARP Reply.
+* **Hub:** The hub broadcasts the ARP request out of all other ports. The router, if on the same “wire,” responds with an ARP Reply.
+* **Switch:** The switch checks its local CAM/MAC table for the MAC address’s port. If no entry, it rebroadcasts the ARP request. If the MAC address is found, it sends the ARP request to the correct port. The router responds with an ARP Reply.
+
+``ARP Reply``::
+
+Sender MAC: target:mac:address:here
+Sender IP: target.ip.goes.here
+Target MAC: interface:mac:address:here
+Target IP: interface.ip.goes.here
+
+Once the network library has the IP address of either our DNS server or the default gateway, it resumes its DNS process:
+* The DNS client establishes a socket to UDP port 53 on the DNS server.
+* If the response size is too large, TCP is used.
+* If the local/ISP DNS server does not have it, a recursive search is requested up the DNS server list until an answer is found.
+
+**Opening of a Socket**
+
+Once the browser receives the IP address of the destination server, it takes that and the given port number from the URL (defaulting to port 80 for HTTP and 443 for HTTPS) and requests a TCP socket stream.
+
+* The Transport Layer crafts a TCP segment, adds the destination port, and selects a source port.
+* The Network Layer wraps an IP header, inserting the IP addresses to form a packet.
+* The Link Layer adds a frame header, including the MAC addresses of the NIC and the gateway.
+
+The packet is then transmitted through Ethernet, WiFi, or Cellular data networks. For home or small business connections, the packet passes through a modem, converting digital data to analog signals for transmission. Larger businesses or newer residential connections use fiber or direct Ethernet, keeping the data digital.
+
+Each router along the way extracts the destination address from the IP header and routes it to the next hop, decrementing the TTL field. If TTL reaches zero or the router’s queue is full, the packet is dropped.
+
+The send and receive process follows the TCP connection flow:
+* **Client SYN Packet:** Client sends an initial sequence number (ISN) with the SYN bit set.
+* **Server SYN-ACK Packet:** Server responds with its own ISN, setting SYN and ACK bits.
+* **Client ACK Packet:** Client acknowledges the connection, increasing sequence numbers.
+
+**TLS Handshake**
+
+* **ClientHello:** The client sends a message with its TLS version, cipher algorithms, and compression methods.
+* **ServerHello:** The server responds with its TLS version, selected cipher, compression method, and public certificate.
+* **Certificate Verification:** The client verifies the server’s certificate and encrypts a pseudo-random string with the server’s public key to determine the symmetric key.
+* **Finished Messages:** Both client and server exchange encrypted hashes to verify the connection.
+
+**If a Packet is Dropped**
+
+Due to congestion or hardware issues, packets may be dropped. The sender adjusts the congestion window based on the maximum segment size (MSS), increasing the window size exponentially until a packet is dropped, then reducing it exponentially.
+
+**HTTP Protocol**
+
+The client sends an HTTP request. If using HTTP/1.1, the request includes headers and ends with a blank newline. The server responds with a status code and the requested resource.
+
+**Server Request Handling**
+
+The HTTPD server (e.g., Apache, nginx, IIS) handles the request:
+* Parses the request method, domain, and path.
+* Verifies Virtual Host configuration and method acceptance.
+* Checks rewrite rules.
+* Pulls the requested content, interprets it if necessary (e.g., PHP), and streams the output to the client.
+
+**Behind the Scenes of the Browser**
+
+The browser parses HTML, CSS, and JS, constructs the DOM tree, render tree, and lays out and paints the render tree. The browser user interface includes common elements like the address bar, navigation buttons, and more.
+
+**HTML Parsing**
+
+The rendering engine parses HTML into a DOM tree, handling errors and dynamic code. The parsing algorithm involves tokenization and tree construction.
+
+**CSS Interpretation**
+
+CSS files and styles are parsed into a StyleSheet object, which contains rules and selectors.
+
+**Page Rendering**
+
+The browser creates a Frame/Render Tree, calculates node dimensions, and coordinates. Layers are created for animation, and textures are allocated. Drawing commands are executed, and the page is composited and rendered.
+
+**GPU Rendering**
+
+Graphics computations may use the GPU for parallelism, splitting tasks to leverage GPU power.
+
+**Window Server**
+
+After rendering, JavaScript and plugins execute, potentially causing more network requests and re-rendering.
+
+—
